@@ -138,7 +138,7 @@ async def scrape_flipkart(
             "en-IN",
             {"width": 414, "height": 896},
             wait_selectors=_CARD_SELECTORS[:4] + ["div._4rR01T", "a.s1Q9rs"],
-            timeout=20000,
+            timeout=40000,
             proxy_url=None,
         )
         if html:

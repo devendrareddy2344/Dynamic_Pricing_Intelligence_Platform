@@ -200,7 +200,7 @@ async def scrape_amazon(
                 ".a-price-whole",
                 ".a-offscreen",
             ],
-            timeout=25000,
+            timeout=40000,
             proxy_url=None,
         )
     except Exception:

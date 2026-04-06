@@ -211,7 +211,7 @@ async def run_scrapers_streaming(
     """
     sites = _enabled_sites()
     raw_timeout_sec = float(os.environ.get("SCRAPER_TIMEOUT_SECONDS", "20"))
-    timeout_sec = min(raw_timeout_sec, 20.0)
+    timeout_sec = min(raw_timeout_sec, 45.0)
     max_retries = int(os.environ.get("SCRAPER_MAX_RETRIES", "1"))
     if timeout_sec >= 20.0 and max_retries > 1:
         max_retries = 1

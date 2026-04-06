@@ -143,7 +143,7 @@ async def scrape_bestbuy(
                 ".product-item",
                 "div[class*='shop-sku-list-item']",
             ],
-            timeout=25000,
+            timeout=40000,
             proxy_url=None,
         )
     except Exception:

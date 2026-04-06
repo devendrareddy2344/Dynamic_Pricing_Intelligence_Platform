@@ -161,7 +161,7 @@ async def scrape_walmart(
                 "[data-automation-id='product-title']",
                 "span.lh-title",
             ],
-            timeout=30000,
+            timeout=40000,
             proxy_url=None,
         )
         if html and not _is_walmart_blocked(html, url):

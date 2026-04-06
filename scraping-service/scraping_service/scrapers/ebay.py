@@ -234,7 +234,7 @@ async def scrape_ebay(
             "en-US",
             {"width": 414, "height": 896},
             wait_selectors=[".s-item", ".s-item__wrapper", "[data-view='mi:1686|iid:1']"],
-            timeout=20000,
+            timeout=40000,
         )
     except Exception:
         html = None

@@ -69,9 +69,9 @@ async def fetch_page_html_with_stealth(
     locale: str,
     viewport: Any,
     wait_selectors: Sequence[str] | None = None,
-    timeout: int = 20000,
+    timeout: int = 40000,
     proxy_url: Any | None = None,
-    block_resources: bool = True,
+    block_resources: bool = False,
 ) -> str | None:
     """Fetch HTML with Playwright + stealth. Returns None on any failure.
 

@@ -150,7 +150,7 @@ async def scrape_croma(
             "en-IN",
             {"width": 414, "height": 896},
             wait_selectors=_CARD_SELECTORS[:4] + [".product-title", ".new-price"],
-            timeout=20000,
+            timeout=40000,
             proxy_url=None,
         )
         if html and not _is_croma_blocked(html):
