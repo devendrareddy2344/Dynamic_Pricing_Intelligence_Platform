@@ -21,7 +21,7 @@ def test_gemini():
     if not api_key:
         print("Gemini: Missing API Key")
         return
-    if api_key == "AIzaSyDHM-7BaqCTuolrFQX6OchYsUPdCgZEX7c":
+    if api_key == "":
         print("Gemini: Still using the fake placeholder key from .env.example!")
         return
     genai.configure(api_key=api_key)
