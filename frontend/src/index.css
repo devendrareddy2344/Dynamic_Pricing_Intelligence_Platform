@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --accent: #00f2fe;
+    --accent-glow: rgba(0, 242, 254, 0.4);
+    --ink-950: #0a0c10;
+    --ink-900: #12161b;
+    --ink-800: #1a1f26;
+  }
+
+  body {
+    @apply m-0 bg-ink-950 text-slate-200 antialiased selection:bg-accent/30;
+    font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl;
+  }
+
+  .accent-gradient {
+    background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+  }
+
+  .text-glow {
+    text-shadow: 0 0 15px var(--accent-glow);
+  }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 1.2s ease-in-out infinite;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-ink-950;
+}
+
+@keyframes scanner {
+  0% { top: 0%; opacity: 0; }
+  5% { opacity: 1; }
+  95% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+.scanner-line {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(to right, transparent, #00f2fe, transparent);
+  box-shadow: 0 0 15px rgba(0, 242, 254, 0.6);
+  z-index: 10;
+  animation: scanner 2s ease-in-out infinite;
+}

@@ -1,0 +1,11 @@
+{
+  "css.lint.unknownAtRules": "ignore",
+  "python.analysis.extraPaths": [
+    "./api_gateway",
+    "./genai-service",
+    "./ml-service",
+    "./scraping-service",
+    "./vision-service"
+  ],
+  "python.defaultInterpreterPath": "./venv/Scripts/python.exe"
+}
