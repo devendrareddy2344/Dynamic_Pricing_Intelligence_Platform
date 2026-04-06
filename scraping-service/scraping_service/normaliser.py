@@ -76,4 +76,4 @@ def isolation_flag_prices(prices: list[float], contamination: float = 0.15) -> l
     iso = IsolationForest(contamination=min(contamination, 0.5), random_state=42)
     iso.fit(X)
     pred = iso.predict(X)
-    return [bool(p == -1) for p in pred]
+    return [bool(bool(p == -1)) for p in pred]

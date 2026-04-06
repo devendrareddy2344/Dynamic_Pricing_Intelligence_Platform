@@ -7,5 +7,5 @@ def title_match_score(identified_product: str, scraped_title: str) -> float:
     return fuzz.token_set_ratio(identified_product.lower(), scraped_title.lower()) / 100.0
 
 
-def passes_validation(score: float, threshold: float = 0.70) -> bool:
+def passes_validation(score: float, threshold: float = 0.50) -> bool:
     return score >= threshold

@@ -1,6 +1,5 @@
-import os
-import re
 import asyncio
+import re
 import time
 from urllib.parse import quote_plus
 
@@ -24,9 +23,93 @@ def _is_bestbuy_blocked(html: str, url: str) -> bool:
         "forbidden",
         "unusual traffic",
         "verify you are human",
+        "pardon our interruption",   # BestBuy-specific Akamai block page
     ]
     url_blocked = "block" in str(url).lower() or "captcha" in str(url).lower()
-    return any(signal in text for signal in blocked_signals) or url_blocked or len(text) < 1000
+    # BestBuy pages always contain product JSON; if less than 2 KB it's a block page
+    return any(signal in text for signal in blocked_signals) or url_blocked or len(text) < 2000
+
+
+def _parse_bestbuy_cards(
+    soup: BeautifulSoup, product_name: str, url: str, latency_ms: float, method: str
+) -> NormalisedOffer | None:
+    """Shared card parser for both Playwright and httpx HTML paths."""
+    cards = (
+        soup.select("li.sku-item")
+        or soup.select(".sku-item")
+        or soup.select("[data-sku-id]")
+        or soup.select("[data-automation='product-item']")
+        or soup.select(".product-item")
+        or soup.select(".sku-container")
+        or soup.select("[data-testid*='product']")
+        # 2024+ layout
+        or soup.select("div[class*='shop-sku-list-item']")
+        or soup.select("article[class*='product']")
+    )
+
+    for card in cards[:12]:
+        title_el = card.select_one(
+            ".sku-title a, h4.sku-header a, span.sku-title, "
+            "a[data-automation='product-title'], .product-title a, "
+            ".product-name a, [data-automation*='title'] a, "
+            ".sku-header a, a.product-link, h4 a, "
+            # 2024 layout
+            "h2 a, a[class*='product-title']"
+        )
+        price_el = card.select_one(
+            ".priceView-hero-price span[aria-hidden='true'], "
+            ".priceView-hero-price .sr-only, "
+            ".priceView-customer-price span, "
+            "div.priceView span, span.sr-price, "
+            "[data-automation='product-price'], "
+            ".price-current, .product-price, "
+            "[data-automation*='price'], .sr-price, "
+            ".priceView-price span, .price-block, "
+            # 2024 layout
+            "span[class*='price'], div[class*='price']"
+        )
+
+        if not title_el or not price_el:
+            continue
+
+        title = title_el.get_text(" ", strip=True)
+
+        # Resolve href
+        href = title_el.get("href") or ""
+        if not href:
+            first_a = card.select_one("a[href]")
+            href = first_a.get("href", "") if first_a else ""
+        if href.startswith("/"):
+            href = "https://www.bestbuy.com" + href
+
+        raw = price_el.get_text(strip=True)
+        p_val, _ = strip_currency(raw, "USD")
+        if p_val is None:
+            m = re.search(r"\$?\s*([\d,]+\.?\d*)", raw)
+            if m:
+                p_val = float(m.group(1).replace(",", ""))
+            else:
+                continue
+
+        if p_val <= 0:
+            continue
+
+        score = title_match_score(product_name, title)
+        if not passes_validation(score):
+            continue
+
+        return NormalisedOffer(
+            source="bestbuy",
+            price=p_val,
+            currency="USD",
+            product_title=title,
+            product_url=href or url,
+            in_stock=True,
+            title_match_score=score,
+            raw_price_text=raw,
+            metadata={"latency_ms": round(latency_ms, 2), "method": method},
+        )
+    return None
 
 
 async def scrape_bestbuy(
@@ -34,162 +117,74 @@ async def scrape_bestbuy(
     product_name: str,
     session_id: str,
 ) -> NormalisedOffer | None:
-    """Best Buy search via Playwright (more reliable for dynamic content)."""
+    """Best Buy search via Playwright-stealth (primary) + httpx (fallback).
+
+    Best Buy uses Akamai Bot Manager, which is very aggressive, so Playwright
+    with stealth is the primary path. The httpx fallback is provided because
+    BestBuy occasionally serves unchallenged responses to desktop UAs.
+    """
     q = quote_plus(search_query[:120])
+    # intl=nosplash prevents the country-selector popup
     url = f"https://www.bestbuy.com/site/searchpage.jsp?st={q}&intl=nosplash"
     t0 = time.perf_counter()
-    
-    # Try Playwright first (more reliable for Best Buy's dynamic content)
+
+    # ── Stage 1: Playwright stealth (primary) ───────────────────────────────
     try:
         html = await fetch_page_html_with_stealth(
             url,
-            random_mobile_ua(),
+            random_ua(),           # Desktop UA works better on BestBuy
             "en-US",
-            {"width": 414, "height": 896},
+            {"width": 1280, "height": 800},
             wait_selectors=[
-                "li.sku-item", 
-                ".sku-item", 
-                "[data-sku-id]", 
-                "ol li",
+                "li.sku-item",
+                ".sku-item",
+                "[data-sku-id]",
                 "[data-automation='product-item']",
                 ".product-item",
-                ".sku-container",
-                "[data-testid*='product']"
+                "div[class*='shop-sku-list-item']",
             ],
-            timeout=10000,
+            timeout=25000,
+            proxy_url=None,
         )
     except Exception:
         html = None
 
-    if html:
+    if html and not _is_bestbuy_blocked(html, url):
         soup = BeautifulSoup(html, "lxml")
-        cards = (
-            soup.select("li.sku-item")
-            or soup.select(".sku-item")
-            or soup.select("[data-sku-id]")
-            or soup.select("ol li")
-            or soup.select("[data-automation='product-item']")
-            or soup.select(".product-item")
-            or soup.select(".sku-container")
-            or soup.select("[data-testid*='product']")
+        offer = _parse_bestbuy_cards(
+            soup, product_name, url,
+            (time.perf_counter() - t0) * 1000, "playwright"
         )
-        
-        for card in cards[:12]:
-            title_el = card.select_one(
-                ".sku-title a, h4 a, span.sku-title, a[data-automation='product-title'], "
-                ".product-title a, .product-name a, [data-automation*='title'] a, "
-                ".sku-header a, .product-link"
-            )
-            price_el = card.select_one(
-                ".priceView-hero-price__price, .priceView-customer-price span, div.priceView span, span.sr-price, [data-automation='product-price'], "
-                ".price-current, .product-price, [data-automation*='price'], .sr-price, .price, .priceView-price span, .price-block"
-            )
-            
-            if not title_el or not price_el:
-                continue
-            
-            title = title_el.get_text(" ", strip=True)
-            href = title_el.get("href") or (card.select_one("a").get("href") if card.select_one("a") else "")
-            if href.startswith("/"):
-                href = "https://www.bestbuy.com" + href
-            
-            raw = price_el.get_text(strip=True)
-            p_val, _ = strip_currency(raw, "USD")
-            if p_val is None:
-                m = re.search(r"\$?\s*([\d,]+\.?\d*)", raw)
-                if m:
-                    p_val = float(m.group(1).replace(",", ""))
-                else:
-                    continue
-            
-            score = title_match_score(product_name, title)
-            if not passes_validation(score):
-                continue
-            
-            return NormalisedOffer(
-                source="bestbuy",
-                price=p_val,
-                currency="USD",
-                product_title=title,
-                product_url=href or url,
-                in_stock=True,
-                title_match_score=score,
-                raw_price_text=raw,
-                metadata={"latency_ms": (time.perf_counter() - t0) * 1000, "method": "playwright"},
-            )
-    
-    # Fallback: try HTTP scraping with single fast attempt
+        if offer:
+            return offer
+
+    # ── Stage 2: httpx fallback (single attempt, desktop UA) ────────────────
     try:
-        headers = get_mobile_headers("bestbuy")
-        headers["User-Agent"] = random_mobile_ua()
+        headers = get_browser_headers("bestbuy")
+        headers["User-Agent"] = random_ua()
         headers.setdefault("Referer", "https://www.google.com/")
-        
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, trust_env=False, headers=headers, http2=False) as client:
+
+        async with httpx.AsyncClient(
+            timeout=12.0,
+            follow_redirects=True,
+            trust_env=False,
+            headers=headers,
+            http2=False,
+        ) as client:
             r = await client.get(url)
-            
-            # Check for bot challenge (early exit to use Playwright)
-            if _is_bestbuy_blocked(r.text, str(r.url)):
-                return None  # Let orchestrator try alternative queries
-            
-            if r.status_code in {403, 429}:
-                return None  # Blocked by server
-            if r.status_code == 404:
-                return None
-            if r.status_code != 200:
-                return None
-            
-            latency_ms = (time.perf_counter() - t0) * 1000
-            
-            soup = BeautifulSoup(r.text, "lxml")
-            cards = (
-                soup.select("li.sku-item")
-                or soup.select(".sku-item")
-                or soup.select("[data-sku-id]")
-                or soup.select("ol li")
-            )
-            
-            if not cards:
-                return None
-            
-            for card in cards[:12]:
-                title_el = card.select_one(".sku-title a, h4 a, span.sku-title, a[data-automation='product-title']")
-                price_el = card.select_one(".priceView-hero-price__price, .priceView-customer-price span, div.priceView span, span.sr-price, [data-automation='product-price'], .price-current, .price, .priceView-price span, .price-block")
-                
-                if not title_el or not price_el:
-                    continue
-                
-                title = title_el.get_text(" ", strip=True)
-                href = title_el.get("href") or (card.select_one("a").get("href") if card.select_one("a") else "")
-                if href.startswith("/"):
-                    href = "https://www.bestbuy.com" + href
-                
-                raw = price_el.get_text(strip=True)
-                p_val, _ = strip_currency(raw, "USD")
-                if p_val is None:
-                    m = re.search(r"\$?\s*([\d,]+\.?\d*)", raw)
-                    if m:
-                        p_val = float(m.group(1).replace(",", ""))
-                    else:
-                        continue
-                
-                score = title_match_score(product_name, title)
-                if not passes_validation(score):
-                    continue
-                
-                return NormalisedOffer(
-                    source="bestbuy",
-                    price=p_val,
-                    currency="USD",
-                    product_title=title,
-                    product_url=href or url,
-                    in_stock=True,
-                    title_match_score=score,
-                    raw_price_text=raw,
-                    metadata={"latency_ms": latency_ms, "method": "httpx"},
-                )
+
+        if r.status_code in {403, 429, 404}:
+            return None
+        if r.status_code != 200:
+            return None
+        if _is_bestbuy_blocked(r.text, str(r.url)):
+            return None
+
+        latency_ms = (time.perf_counter() - t0) * 1000
+        soup = BeautifulSoup(r.text, "lxml")
+        return _parse_bestbuy_cards(soup, product_name, url, latency_ms, "httpx")
+
     except asyncio.TimeoutError:
-        pass
+        return None
     except Exception:
-        pass
-    
-    return None
+        return None
