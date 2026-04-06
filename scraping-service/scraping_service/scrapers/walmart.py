@@ -56,6 +56,12 @@ def _parse_walmart_price(card) -> str:
         if el:
             return el.get_text(" ", strip=True)
 
+    # Strategy 4: Fallback generic text search
+    txt = card.get_text(" ", strip=True)
+    m = re.search(r"\$\s?([\d,]+\.?\d*)", txt)
+    if m:
+        return m.group(0)
+
     return ""
 
 
@@ -99,11 +105,14 @@ def _parse_walmart_cards(
             # 2024 layout
             or card.select_one("a[link-identifier]")
             or card.select_one("span[class*='lh-copy'][class*='normal']")
+            or card.select_one("a[href]")
         )
         if not title_el:
             continue
 
         title = title_el.get_text(" ", strip=True)
+        if len(title) < 5:
+            continue
 
         # Resolve product link safely
         first_a = card.select_one("a[href]")

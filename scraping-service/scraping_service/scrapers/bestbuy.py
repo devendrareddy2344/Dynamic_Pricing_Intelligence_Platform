@@ -69,12 +69,24 @@ def _parse_bestbuy_cards(
             "span[class*='price'], div[class*='price']"
         )
 
-        if not title_el or not price_el:
+        if not title_el:
+            title_el = card.select_one("a[href]")
+        if not title_el:
             continue
 
         title = title_el.get_text(" ", strip=True)
+        if len(title) < 5:
+            continue
 
-        # Resolve href
+        raw = price_el.get_text(strip=True) if price_el else ""
+        if not raw:
+            import re
+            txt = card.get_text(" ", strip=True)
+            m = re.search(r"\$\s?([\d,]+\.?\d*)", txt)
+            if m:
+                raw = m.group(0)
+            else:
+                continue
         href = title_el.get("href") or ""
         if not href:
             first_a = card.select_one("a[href]")

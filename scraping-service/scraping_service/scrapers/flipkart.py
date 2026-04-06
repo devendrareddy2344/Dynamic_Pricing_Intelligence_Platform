@@ -39,10 +39,11 @@ _CARD_SELECTORS = [
 ]
 
 _TITLE_SELECTORS = [
+    "div.KzDlHZ",            # Primary desktop title (2024-2025)
+    "div.KzDlHZ a",          # Nested title
     "a.s1Q9rs",              # Standard desktop title link
     "a.IRpwTe",              # Mobile title link
     "a.WKTcLC",              # 2025 title link variant
-    "div.KzDlHZ a",          # Nested title
     "div._4rR01T",           # Legacy title div
     "h2 a",                  # Generic heading link
     "a[title]",              # Any anchor with title attr
@@ -86,15 +87,34 @@ def _parse_flipkart_cards(
             if price_el:
                 break
 
-        if not title_el or not price_el:
+        if not title_el:
+            title_el = card.select_one("a[href]")
+        if not title_el:
+            continue
+            
+        title = title_el.get_text(" ", strip=True)
+        if len(title) < 5:
+            # Maybe the title is just inside the wrapper text
             continue
 
-        title = title_el.get_text(" ", strip=True)
         href = title_el.get("href") or ""
+        if not href or href == "#":
+            first_a = card.select_one("a[href]")
+            href = first_a.get("href", "") if first_a else ""
+            
         if href.startswith("/"):
             href = "https://www.flipkart.com" + href
 
-        raw = price_el.get_text(strip=True)
+        raw = price_el.get_text(strip=True) if price_el else ""
+        if not raw:
+            # Fallback string search for price
+            full_text = card.get_text(" ", strip=True)
+            import re
+            m = re.search(r"₹\s?([\d,]+\.?\d*)", full_text)
+            if m:
+                raw = m.group(0)
+            else:
+                continue
         # Strip currency symbol prefix that Flipkart sometimes omits
         if raw and not any(c in raw for c in "₹$€£"):
             raw = "₹" + raw

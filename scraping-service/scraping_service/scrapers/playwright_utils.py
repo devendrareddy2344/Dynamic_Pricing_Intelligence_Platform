@@ -151,14 +151,13 @@ async def fetch_page_html_with_stealth(
             await asyncio.sleep(random.uniform(0.5, 1.3))
 
             if wait_selectors:
-                # Give each selector up to 25% of total timeout, at least 1.5 s
-                sel_timeout = min(5000, max(1500, timeout // 4))
-                for selector in wait_selectors:
-                    try:
-                        await page.wait_for_selector(selector, timeout=sel_timeout)
-                        break  # First match is enough
-                    except Exception:
-                        continue
+                try:
+                    # Combine all CSS selectors and wait for any to appear within a strict limit.
+                    # This prevents wasting 30+ seconds if we land on a bot-block challenge page.
+                    combined_sel = ", ".join(wait_selectors)
+                    await page.wait_for_selector(combined_sel, timeout=10000)
+                except Exception:
+                    pass
 
             # Gradual human-like scroll to trigger lazy-loaded content
             await page.evaluate("window.scrollTo(0, Math.floor(document.body.scrollHeight * 0.4))")
