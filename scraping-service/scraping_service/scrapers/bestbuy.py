@@ -94,7 +94,6 @@ def _parse_bestbuy_cards(
         if href.startswith("/"):
             href = "https://www.bestbuy.com" + href
 
-        raw = price_el.get_text(strip=True)
         p_val, _ = strip_currency(raw, "USD")
         if p_val is None:
             m = re.search(r"\$?\s*([\d,]+\.?\d*)", raw)
@@ -135,16 +134,40 @@ async def scrape_bestbuy(
     with stealth is the primary path. The httpx fallback is provided because
     BestBuy occasionally serves unchallenged responses to desktop UAs.
     """
-    q = quote_plus(search_query[:120])
+    q = quote_plus(product_name[:80] if len(product_name) > 5 else search_query[:80])
     # intl=nosplash prevents the country-selector popup
     url = f"https://www.bestbuy.com/site/searchpage.jsp?st={q}&intl=nosplash"
     t0 = time.perf_counter()
 
-    # ── Stage 1: Playwright stealth (primary) ───────────────────────────────
+    # ── Stage 1: httpx mobile bypass (faster than Playwright) ────────────────
+    headers = get_mobile_headers("bestbuy")
+    headers["User-Agent"] = random_mobile_ua()
+    headers.setdefault("Referer", "https://www.google.com/")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=12.0,
+            follow_redirects=True,
+            trust_env=False,
+            headers=headers,
+            http2=False,
+        ) as client:
+            r = await client.get(url)
+
+        if r.status_code == 200 and not _is_bestbuy_blocked(r.text, str(r.url)):
+            latency_ms = (time.perf_counter() - t0) * 1000
+            soup = BeautifulSoup(r.text, "lxml")
+            offer = _parse_bestbuy_cards(soup, product_name, url, latency_ms, "httpx")
+            if offer:
+                return offer
+    except Exception:
+        pass
+
+    # ── Stage 2: Playwright stealth (fallback) ───────────────────────────────
     try:
         html = await fetch_page_html_with_stealth(
             url,
-            random_ua(),           # Desktop UA works better on BestBuy
+            random_ua(),           # Desktop UA works better on BestBuy desktop
             "en-US",
             {"width": 1280, "height": 800},
             wait_selectors=[
@@ -155,7 +178,7 @@ async def scrape_bestbuy(
                 ".product-item",
                 "div[class*='shop-sku-list-item']",
             ],
-            timeout=40000,
+            timeout=45000,
             proxy_url=None,
         )
     except Exception:
@@ -169,34 +192,11 @@ async def scrape_bestbuy(
         )
         if offer:
             return offer
+        else:
+            with open("failed_bestbuy.html", "w", encoding="utf-8") as f:
+                f.write(html)
+    elif html:
+        with open("blocked_bestbuy.html", "w", encoding="utf-8") as f:
+            f.write(html)
 
-    # ── Stage 2: httpx fallback (single attempt, desktop UA) ────────────────
-    try:
-        headers = get_browser_headers("bestbuy")
-        headers["User-Agent"] = random_ua()
-        headers.setdefault("Referer", "https://www.google.com/")
-
-        async with httpx.AsyncClient(
-            timeout=12.0,
-            follow_redirects=True,
-            trust_env=False,
-            headers=headers,
-            http2=False,
-        ) as client:
-            r = await client.get(url)
-
-        if r.status_code in {403, 429, 404}:
-            return None
-        if r.status_code != 200:
-            return None
-        if _is_bestbuy_blocked(r.text, str(r.url)):
-            return None
-
-        latency_ms = (time.perf_counter() - t0) * 1000
-        soup = BeautifulSoup(r.text, "lxml")
-        return _parse_bestbuy_cards(soup, product_name, url, latency_ms, "httpx")
-
-    except asyncio.TimeoutError:
-        return None
-    except Exception:
-        return None
+    return None

@@ -210,8 +210,8 @@ async def run_scrapers_streaming(
     Tries multiple search queries in sequence if initial results are empty.
     """
     sites = _enabled_sites()
-    raw_timeout_sec = float(os.environ.get("SCRAPER_TIMEOUT_SECONDS", "20"))
-    timeout_sec = min(raw_timeout_sec, 45.0)
+    raw_timeout_sec = float(os.environ.get("SCRAPER_TIMEOUT_SECONDS", "60"))
+    timeout_sec = min(raw_timeout_sec, 75.0)
     max_retries = int(os.environ.get("SCRAPER_MAX_RETRIES", "1"))
     if timeout_sec >= 20.0 and max_retries > 1:
         max_retries = 1

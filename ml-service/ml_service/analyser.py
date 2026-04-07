@@ -26,7 +26,7 @@ def analyse_prices(
         min_sources: Minimum sources required for analysis
         model_type: ML model to use ('auto', 'kmeans', 'dbscan', 'hierarchical', 'robust')
     """
-    min_s = min_sources or int(os.environ.get("MIN_SOURCES_FOR_ML", "3"))
+    min_s = min_sources or int(os.environ.get("MIN_SOURCES_FOR_ML", "1"))
     if len(offers) < min_s:
         return {
             "ready": False,

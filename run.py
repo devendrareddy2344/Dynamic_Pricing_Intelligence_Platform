@@ -2,6 +2,10 @@ import sys
 import asyncio
 import os
 
+# Silence Playwright asyncio teardown exceptions on Windows
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 if sys.platform == 'win32':
     # This must be set before any event loop is created.
     # Uvicorn on Windows defaults to SelectorEventLoop unless this is set here.

@@ -39,4 +39,5 @@ python-json-logger==3.2.1
 pydantic==2.12.5
 pydantic-settings==2.6.1
 pydantic-core==2.41.5
+python-dotenv==1.0.1
 rapidfuzz~=3.14.0

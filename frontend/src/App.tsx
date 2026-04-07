@@ -22,6 +22,10 @@ import {
   ArrowRight,
   ExternalLink,
 } from "lucide-react";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+
 
 type Vision = {
   session_id: string;
@@ -80,6 +84,7 @@ export default function App() {
   const [siteState, setSiteState] = useState<Record<string, "queued" | "scraping" | "found" | "failed">>(() =>
     Object.fromEntries(ALL_SITES.map((s) => [s, "queued"])) as Record<string, "queued">
   );
+  const [siteError, setSiteError] = useState<Record<string, string>>({});
 
   const [prices, setPrices] = useState<PriceEvt[]>([]);
   const [analysis, setAnalysis] = useState<PriceEvt | null>(null);
@@ -114,6 +119,7 @@ export default function App() {
     setGenaiText("");
     setError(null);
     setSiteState(Object.fromEntries(ALL_SITES.map((s) => [s, "queued"])) as Record<string, "queued">);
+    setSiteError({});
     if (f) {
       const url = URL.createObjectURL(f);
       setPreview(url);
@@ -169,6 +175,7 @@ export default function App() {
         if (msg.source) {
           const src = msg.source;
           setSiteState((s) => ({ ...s, [src as string]: "failed" }));
+          if (msg.reason) setSiteError((e) => ({ ...e, [src as string]: msg.reason! }));
         }
       } catch {
         /* ignore */
@@ -379,9 +386,11 @@ export default function App() {
               {ALL_SITES.map((s) => (
                 <div
                   key={s}
+                  onClick={() => { if (siteState[s] === 'failed' && siteError[s]) alert(`[${s.toUpperCase()}] ERROR:\n${siteError[s]}`); }}
                   className={`glass relative group rounded-2xl p-4 transition-all duration-300 ${
                     siteState[s] === 'scraping' ? 'ring-2 ring-accent animate-pulse shadow-[0_0_20px_rgba(0,242,254,0.2)]' : 
-                    siteState[s] === 'found' ? 'ring-1 ring-emerald-500/30' : 'ring-1 ring-white/5'
+                    siteState[s] === 'found' ? 'ring-1 ring-emerald-500/30' : 
+                    siteState[s] === 'failed' ? 'ring-1 ring-rose-500/50 cursor-pointer hover:bg-rose-500/10' : 'ring-1 ring-white/5'
                   }`}
                 >
                   <div className={`absolute top-2 right-2 h-2 w-2 rounded-full ${
@@ -580,9 +589,14 @@ export default function App() {
               <h3 className="text-lg font-bold text-white uppercase tracking-tight flex items-center gap-2 mb-6">
                 <Zap className="h-5 w-5 text-accent" /> Intelligence Report
               </h3>
-              <div className="prose prose-invert max-w-none">
-                <div className="whitespace-pre-wrap font-medium text-sm leading-8 text-slate-300 first-letter:text-4xl first-letter:font-black first-letter:text-accent first-letter:mr-2">
-                  {genaiText}
+              <div className="prose prose-invert prose-slate max-w-none prose-table:w-full prose-th:text-accent prose-td:border-white/5 prose-th:border-white/10 prose-headings:text-white prose-a:text-accent prose-strong:text-emerald-400">
+                <div className="text-sm leading-relaxed text-slate-300">
+                  <ReactMarkdown 
+                    remarkPlugins={[remarkGfm]} 
+                    rehypePlugins={[rehypeRaw]}
+                  >
+                    {genaiText}
+                  </ReactMarkdown>
                 </div>
               </div>
             </div>

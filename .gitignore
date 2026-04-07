@@ -1,11 +1,62 @@
+# Environment and Secrets
 .env
+.env.local
+
+# Python environment
 __pycache__/
 *.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / Build
+dist/
+build/
+*.egg-info/
+
+# Tests and Linting
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Frontend
 node_modules/
 frontend/dist/
-*.egg-info/
-.venv/
-venv/
+.eslintcache
+
+# Project-specific Unwanted Files
+# Debug HTML Dumps
+blocked_*.html
+failed_*.html
+fk_card*.html
+out.txt
+orch_log.txt
+
+# Screenshots and Debug Images
+*.png
+*.jpg
+*.jpeg
+
+# Local Databases
+*.db
+*.sqlite
+
+# One-off Debug Scripts and Temporary Files
+/tmp/
+test_*.py
+debug_*.py
+analyze_*.py
+temp_*.py
+out.txt
+models.txt
+*.log
+
+# IDE Settings
+.vscode/
+.idea/
+*.swp
+*.swo

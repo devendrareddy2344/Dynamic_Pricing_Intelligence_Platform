@@ -69,7 +69,7 @@ async def fetch_page_html_with_stealth(
     locale: str,
     viewport: Any,
     wait_selectors: Sequence[str] | None = None,
-    timeout: int = 40000,
+    timeout: int = 60000,
     proxy_url: Any | None = None,
     block_resources: bool = False,
 ) -> str | None:
@@ -90,15 +90,12 @@ async def fetch_page_html_with_stealth(
             ignore_default_args=["--enable-automation"],
             args=[
                 "--disable-blink-features=AutomationControlled",
-                "--disable-web-security",
                 "--disable-features=VizDisplayCompositor",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-accelerated-2d-canvas",
                 "--no-first-run",
                 "--no-zygote",
-                "--disable-gpu",
                 "--disable-infobars",
                 "--window-size=1280,800",
                 f"--lang={locale.replace('_', '-')}",
@@ -138,13 +135,19 @@ async def fetch_page_html_with_stealth(
             page.set_default_navigation_timeout(timeout)
             page.set_default_timeout(timeout)
 
+            from scraping_service.debug import log_debug
+            log_debug(f"[{url}] playwright setup complete, navigating...")
             # Navigate — try domcontentloaded first, then commit as fallback
             try:
-                await page.goto(url, timeout=timeout, wait_until="domcontentloaded")
-            except Exception:
+                r = await page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+                log_debug(f"[{url}] goto domcontentloaded status: {r.status if r else 'None'}")
+            except Exception as e:
+                log_debug(f"[{url}] goto domcontentloaded failed: {e}")
                 try:
-                    await page.goto(url, timeout=timeout, wait_until="commit")
-                except Exception:
+                    r = await page.goto(url, timeout=timeout, wait_until="commit")
+                    log_debug(f"[{url}] goto commit status: {r.status if r else 'None'}")
+                except Exception as e:
+                    log_debug(f"[{url}] goto commit failed: {e}")
                     return None
 
             # Brief realistic pause after navigation completes
@@ -165,7 +168,9 @@ async def fetch_page_html_with_stealth(
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(random.uniform(0.4, 0.9))
 
-            return await page.content()
+            content = await page.content()
+            log_debug(f"[{url}] playwright finished rendering. HTML size: {len(content)}")
+            return content
 
         finally:
             for obj in (page, context, browser):

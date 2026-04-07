@@ -8,9 +8,9 @@ from bs4 import BeautifulSoup
 
 from scraping_service.normaliser import NormalisedOffer, strip_currency
 from scraping_service.scrapers.match import passes_validation, title_match_score
-from scraping_service.scrapers.headers import get_browser_headers
+from scraping_service.scrapers.headers import get_browser_headers, get_mobile_headers
 from scraping_service.scrapers.playwright_utils import fetch_page_html_with_stealth
-from scraping_service.user_agents import random_ua
+from scraping_service.user_agents import random_ua, random_mobile_ua
 
 
 def _is_walmart_blocked(html: str, url: str) -> bool:
@@ -152,11 +152,35 @@ async def scrape_walmart(
 
     Walmart uses PerimeterX bot protection; Playwright stealth is essential.
     """
-    q = quote_plus(search_query[:120])
+    q = quote_plus(product_name[:80] if len(product_name) > 5 else search_query[:80])
     url = f"https://www.walmart.com/search?q={q}"
     t0 = time.perf_counter()
 
-    # ── Stage 1: Playwright stealth (primary) ───────────────────────────────
+    # ── Stage 1: httpx mobile bypass (faster than Playwright) ────────────────
+    headers = get_mobile_headers("walmart")
+    headers["User-Agent"] = random_mobile_ua()
+    headers.setdefault("Referer", "https://www.google.com/")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=12.0,
+            follow_redirects=True,
+            trust_env=False,
+            headers=headers,
+            http2=False,
+        ) as client:
+            r = await client.get(url)
+
+        if r.status_code == 200 and not _is_walmart_blocked(r.text, str(r.url)):
+            latency_ms = (time.perf_counter() - t0) * 1000
+            soup = BeautifulSoup(r.text, "lxml")
+            offer = _parse_walmart_cards(soup, product_name, url, latency_ms, "httpx")
+            if offer:
+                return offer
+    except Exception:
+        pass
+
+    # ── Stage 2: Playwright stealth (fallback) ───────────────────────────────
     try:
         html = await fetch_page_html_with_stealth(
             url,
@@ -170,7 +194,7 @@ async def scrape_walmart(
                 "[data-automation-id='product-title']",
                 "span.lh-title",
             ],
-            timeout=40000,
+            timeout=45000,
             proxy_url=None,
         )
         if html and not _is_walmart_blocked(html, url):
@@ -181,32 +205,13 @@ async def scrape_walmart(
             )
             if offer:
                 return offer
+            else:
+                with open("failed_walmart.html", "w", encoding="utf-8") as f:
+                    f.write(html)
+        elif html:
+            with open("blocked_walmart.html", "w", encoding="utf-8") as f:
+                f.write(html)
     except Exception:
         pass
 
-    # ── Stage 2: httpx fallback ──────────────────────────────────────────────
-    headers = get_browser_headers("walmart")
-    headers["User-Agent"] = random_ua()
-    headers.setdefault("Referer", "https://www.google.com/")
-
-    try:
-        async with httpx.AsyncClient(
-            timeout=12.0,
-            follow_redirects=True,
-            trust_env=False,
-            headers=headers,
-            http2=False,
-        ) as client:
-            r = await client.get(url)
-
-        if r.status_code != 200:
-            return None
-        if _is_walmart_blocked(r.text, str(r.url)):
-            return None
-
-        latency_ms = (time.perf_counter() - t0) * 1000
-        soup = BeautifulSoup(r.text, "lxml")
-        return _parse_walmart_cards(soup, product_name, url, latency_ms, "httpx")
-
-    except Exception:
-        return None
+    return None

@@ -31,8 +31,10 @@ dependencies = [
     "python-magic==0.4.27",
     "prometheus-client==0.21.1",
     "python-json-logger==3.2.1",
-    "pydantic==2.10.3",
+    "pydantic==2.12.5",
     "pydantic-settings==2.6.1",
+    "pydantic-core==2.41.5",
+    "python-dotenv==1.0.1",
     "rapidfuzz~=3.14.0"
 ]
 
@@ -48,5 +50,6 @@ where = ["."]
 include = ["api_gateway", "genai_service", "ml_service", "scraping_service", "vision_service"]
 
 [tool.pyright]
-include = ["api_gateway", "genai_service", "ml_service", "scraping_service", "vision_service"]
+include = ["api_gateway", "genai-service", "ml-service", "scraping-service", "vision-service"]
+extraPaths = ["api_gateway", "genai-service", "ml-service", "scraping-service", "vision-service"]
 pythonPath = "./venv/Scripts/python.exe"

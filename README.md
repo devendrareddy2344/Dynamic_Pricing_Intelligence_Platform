@@ -1,78 +1,128 @@
-# Dynamic Pricing Intelligence Platform
+# Synycs Dynamic Pricing Intelligence Platform
 
-Image-only product identification (Gemini Vision), parallel live scrapers (httpx + Playwright), ML analysis (K-Means + Isolation Forest), and streamed Gemini pricing rationale. Observability via Prometheus and Grafana. Data persists in TimescaleDB; vision results cache in Redis (MD5).
+A state-of-the-art, fully autonomous microservice pipeline that evaluates real-time market viability. This platform uses Playwright/HTTPX evasion scraping, isolates optimal market positions using unsupervised Machine Learning, and produces deep analytical reports powered by Generative AI.
 
-## Quick start (Docker Compose)
+---
 
-1. **Install** [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
+## 🏗️ High-Level Component Structure
 
-2. **Configure environment**
+Below is the directory architecture detailing how responsibilities are decoupled across independent microservices:
 
-   - Copy `.env.example` to `.env` (a starter `.env` is included with empty `GEMINI_API_KEY`).
-   - Set **`GEMINI_API_KEY`** (required for vision + GenAI). Get a key from [Google AI Studio](https://aistudio.google.com/apikey).
-   - Optional: **`EBAY_CLIENT_ID`** / **`EBAY_CLIENT_SECRET`** for the eBay Browse API (better eBay results than HTML-only).
-   - Set **`REGION=us`** (default) for US scrapers: Amazon, eBay, Walmart, Best Buy, Target. Use **`REGION=in`** and adjust **`ENABLED_SCRAPERS`** for India-focused runs (e.g. Flipkart, Croma).
+```text
+Synycs_Dynamic_Pricing/
+│
+├── run.py                 # Multi-App Uvicorn Entrypoint
+├── .env                   # Global Configuration (API Keys, Postgres URLs)
+│
+├── api_gateway/           # Core Orchestrator
+│   ├── main.py            # FastAPI Application / Routes
+│   ├── orchestrator.py    # Multi-Scraper Session Executor
+│   └── db.py              # PostgreSQL / TimescaleDB Database Insertion Functions
+│
+├── frontend/              # Live Observability Dashboard
+│   ├── src/App.tsx        # React Vite Application Entry
+│   ├── tailwind.config.js # Typography and Formatting definitions
+│   └── package.json       # React, Recharts, and React-Markdown dependencies
+│
+├── scraping-service/      # Bypass Extraction Engines
+│   ├── scrapers/          # Vendor-specific algorithms (Flipkart, Amazon, Walmart, Bestbuy, Croma)
+│   ├── headers.py         # Mobile/Desktop User-Agent rotation
+│   └── playwright_utils.py# Headless browser configuration / Stealth modes
+│
+├── ml-service/            # Quantitative Data Engine
+│   ├── analyser.py        # DBSCAN / KMeans Clustering Models
+│   └── demand.py          # Elasticity and review confidence scoring
+│
+├── genai-service/         # Strategic Text Generation
+│   └── generator.py       # Prompt Engineering logic connected to OpenRouter models
+│
+└── vision-service/        # Initial Payload Generation
+    └── app.py             # Vision AI extraction of baseline models/colors from user images
+```
 
-3. **Run the stack**
+---
 
-   ```bash
-   docker compose up --build
-   ```
+## 🚀 Execution Pseudo-Code Flow
 
-4. **Open**
+The entire multi-layer application operates autonomously when a User uploads an image via the Frontend. Here is the exact logical pipeline governing data movement:
 
-   - **UI:** http://localhost:5173  
-   - **API docs:** http://localhost:8000/docs  
-   - **Prometheus:** http://localhost:9090  
-   - **Grafana:** http://localhost:3000 (default admin / `changeme` unless overridden)
+```pseudo
+START SESSION:
+  1. USER uploads an Image from the Frontend Dashboard
+  
+  // Phase 1: Identity Extraction
+  2. ROUTE TO vision-service -> POST /identify
+     a. Query OpenRouter Vision Model
+     b. Receive standardized Output: { "product": "Samsung Galaxy S24 FE", "details": ... }
 
-## Local development (without Docker for the UI)
+  // Phase 2: Live Competitive Scraping
+  3. ROUTE TO api_gateway -> orchestrator.run_all_scrapers(product)
+     a. IN PARALLEL, query scraping-service endpoints (Amazon, Flipkart, etc...)
+     b. FOR TARGET IN scrapers:
+          IF WAF Blocked (403):
+              Attempt Fallback Strategy (Mobile Headers / Playwright)
+          IF Found HTML:
+              Extract Title, Price (fallback to robust Regex)
+              Calculate FuzzyMatch(Title)
+          YIELD status to Frontend via Server-Sent-Events (SSE)
 
-- Backend: install `requirements.txt`, set `REDIS_URL`, `DATABASE_URL`, `GEMINI_API_KEY`, then:
+  // Phase 3: Analytical Optimization
+  4. ROUTE TO ml-service -> analyser.analyse_prices(found_prices)
+     a. Filter statistical outliers using IsolationForest
+     b. Run K-Means Clustering on valid prices
+     c. Compare Average, Variance, and determine Optimal Pricing Strategy (e.g. "Competitive Undercut")
+     d. Output Numerical Targets -> ml_optimization_data
 
-  ```bash
-  set PYTHONPATH=api_gateway;vision-service;scraping-service;ml-service;genai-service
-  uvicorn api_gateway.main:app --reload --port 8000
-  ```
+  // Phase 4: Strategy Generation
+  5. ROUTE TO genai-service -> generator.generate_report(ml_optimization_data)
+     a. Pass optimized market targets to large language model
+     b. Prompt model to explain margins, bottom-line, and risks
+     c. Receive heavily styled Markdown output (Intelligence Report)
 
-- Frontend:
+  // Phase 5: Persistence
+  6. EXECUTE api_gateway -> db.insert_session_results()
+     a. Write Vision Identity + Competitor Scores + ML Targets + GenAI text into PostgreSQL
+     
+  7. Frontend renders Final React Markdown and Charts
+END SESSION
+```
 
-  ```bash
-  cd frontend && npm install && npm run dev
-  ```
+---
 
-  Vite proxies `/api` to `http://localhost:8000`.
+## 🛠️ Microservice Details & Protocols
 
-## Architecture (summary)
+### 1. The React Observability Dashboard (`/frontend`)
+Instead of a standard CRUD interface, this UI behaves strictly as an Operations Dashboard. 
+- Uses **Server-Sent Events (SSE)** to stream live ping/failure traces from scrapers.
+- Renders final Intelligence Report using `react-markdown` with GFM (GitHub Flavored Markdown) and Tailwind Typography plugins for flawless rendering of Strategy Tables.
 
-- **`POST /api/v1/vision`** — multipart image → Gemini JSON product schema + `session_id`.
-- **`POST /api/v1/sessions/{id}/scrape`** — starts parallel scrapers with jitter, retries, 25s timeout, circuit breaker (Redis), title match ≥ 70% (RapidFuzz).
-- **`GET /api/v1/sessions/{id}/stream`** — SSE: `price_scraped`, `scraper_failed`, `analysis_ready`, `genai_token`, `done`.
-- **`GET /api/v1/history/{product_hash}`** — price history from TimescaleDB.
-- **`GET /metrics`** — Prometheus metrics.
+### 2. The API Gateway (`/api_gateway`)
+This FastAPI application unifies the system. It exposes synchronous endpoints (`/vision`, `/history`) and the massive asynchronous pipeline (`/scrape`). It is the absolute source of truth prior to executing PostgreSQL transactions (`db.py`).
 
-## Constraints and notes
+### 3. The Scraping Service (`/scraping-service`)
+Engineered to bypass commercial WAFs (Akamai, PerimeterX).
+- Operates primarily via rapid `httpx` logic masquerading as high-tier Smartphone network requests.
+- Implements deep fallback mechanisms for asynchronous Playwright execution if rigorous payload verification is required.
 
-- **Scraping is best-effort.** Retail sites change often, use CAPTCHAs, or block bots. The stack is built for **resilience**: partial results, clear failure reasons, and observability—not a guarantee that every site succeeds every time.
-- **No paid scraping APIs** — only direct httpx / Playwright / BeautifulSoup as specified.
-- **Single currency per deployment** — set `CURRENCY` / `REGION` in `.env`; mixing INR and USD in one ML run is not supported by default.
+### 4. The ML Engine (`/ml-service`)
+Evaluates raw arrays of pricing dynamically. Uses `sklearn` configurations to detect anomalies natively. Capable of dropping its source-count logic seamlessly to handle sparse market responses.
 
-## Database without TimescaleDB
+### 5. OpenRouter Integration (`/genai-service` & `/vision-service`)
+All Artificial Intelligence layers are separated logically. Vision acts as the entrypoint (User Intention), while GenAI acts as the exit point (Strategic Translation).
 
-If PostgreSQL has no Timescale extension (common on a local **PostgreSQL 18** install), use **`scripts/init-postgres.sql`** on database `dynamic_pricing` instead of `init-timescale.sql`. The app does not require a hypertable.
+---
 
-## Project layout
+## 💻 Run Instructions
 
-- `vision-service/` — Gemini vision + Redis MD5 cache  
-- `scraping-service/` — orchestrator, site scrapers, normalisation helpers, circuit breaker  
-- `ml-service/` — clustering, anomaly detection, demand proxy  
-- `genai-service/` — streamed Gemini recommendation text  
-- `api_gateway/` — FastAPI, SSE, metrics, DB writes  
-- `frontend/` — React + Vite + Tailwind + Recharts  
-- `observability/` — Prometheus config; Grafana datasource provisioning  
+**1. Launch the Backend Gateway**
+From the root directory, executed via Uvicorn hot-reload:
+```bash
+python run.py
+```
 
-## Evaluation / demo tips
-
-- Use a **clear, well-lit product photo** for the vision step.
-- For **eBay API** mode, add eBay developer keys to `.env`.
-- If a scraper always times out, check Grafana (`/metrics`) and logs for that site; consider `ENABLED_SCRAPERS` to temporarily disable a flaky source.
+**2. Launch the Frontend Application**
+In a separate terminal:
+```bash
+cd frontend
+npm run dev
+```

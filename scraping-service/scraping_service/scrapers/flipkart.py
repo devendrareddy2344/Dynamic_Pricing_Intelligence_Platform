@@ -36,6 +36,9 @@ _CARD_SELECTORS = [
     "a._1fQZEK",             # Direct anchor card
     "div.cPHDOP",            # 2024 rebranded class
     "div.slAVV4",            # 2025 class seen in wild
+    "div[class*='product']", # Generic fallback
+    "div[class*='card']",    # Generic fallback
+    "a[href*='/p/']",        # RN Web fallback (direct link wrapper)
 ]
 
 _TITLE_SELECTORS = [
@@ -47,6 +50,7 @@ _TITLE_SELECTORS = [
     "div._4rR01T",           # Legacy title div
     "h2 a",                  # Generic heading link
     "a[title]",              # Any anchor with title attr
+    "img[alt]",              # Image alt fallback
 ]
 
 _PRICE_SELECTORS = [
@@ -88,19 +92,35 @@ def _parse_flipkart_cards(
                 break
 
         if not title_el:
-            title_el = card.select_one("a[href]")
+            if card.name == "a":
+                title_el = card
+            else:
+                title_el = card.select_one("a[href]")
         if not title_el:
             continue
             
-        title = title_el.get_text(" ", strip=True)
+        if title_el.name == "img":
+            title = title_el.get("alt", "")
+        else:
+            title = title_el.get_text(" ", strip=True)
+            if not title and card.name == "a":
+                # For RN web elements where the anchor wraps the whole card
+                title = card.get_text(" ", strip=True)
+
         if len(title) < 5:
-            # Maybe the title is just inside the wrapper text
-            continue
+            # Try getting it straight from card text if anchor was generic
+            if card.name == "a":
+                title = card.get_text(" ", strip=True)
+            if len(title) < 5:
+                continue
 
         href = title_el.get("href") or ""
         if not href or href == "#":
-            first_a = card.select_one("a[href]")
-            href = first_a.get("href", "") if first_a else ""
+            if card.name == "a":
+                href = card.get("href", "")
+            else:
+                first_a = card.select_one("a[href]")
+                href = first_a.get("href", "") if first_a else ""
             
         if href.startswith("/"):
             href = "https://www.flipkart.com" + href
@@ -109,21 +129,38 @@ def _parse_flipkart_cards(
         if not raw:
             # Fallback string search for price
             full_text = card.get_text(" ", strip=True)
+            
+            # If the card is an anchor, the price might be in an adjacent sibling wrapped by a parent div
+            if card.name == "a":
+                parent = card.parent
+                while parent and len(parent.get_text(" ", strip=True)) < len(full_text) + 200:
+                    parent_text = parent.get_text(" ", strip=True)
+                    if any(c in parent_text for c in ['₹', 'Rs', 'INR']):
+                        full_text = parent_text
+                        break
+                    parent = parent.parent
+
             import re
-            m = re.search(r"₹\s?([\d,]+\.?\d*)", full_text)
+            m = re.search(r"(?:₹|Rs\.?|INR)\s?([\d,]+\.?\d*)", full_text, flags=re.IGNORECASE)
             if m:
                 raw = m.group(0)
             else:
+                from scraping_service.debug import log_debug
+                log_debug(f"[FLIPKART] Card skipped - no price regex match. Text snippet: {full_text[:100]}")
                 continue
         # Strip currency symbol prefix that Flipkart sometimes omits
         if raw and not any(c in raw for c in "₹$€£"):
             raw = "₹" + raw
         p, _ = strip_currency(raw, "INR")
         if p is None or p <= 0:
+            from scraping_service.debug import log_debug
+            log_debug(f"[FLIPKART] Card skipped - invalid price {p} from raw {raw}")
             continue
 
         score = title_match_score(product_name, title)
         if not passes_validation(score):
+            from scraping_service.debug import log_debug
+            log_debug(f"[FLIPKART] Card '{title}' rejected - score {score} < threshold")
             continue
 
         return NormalisedOffer(
@@ -146,11 +183,13 @@ async def scrape_flipkart(
     session_id: str,
 ) -> NormalisedOffer | None:
     """Flipkart India search via Playwright-stealth (primary) + httpx (fallback)."""
-    q = quote_plus(search_query[:120])
+    # Flipkart frequently returns 0 results for long queries. product_name is shorter.
+    q = quote_plus(product_name[:80] if len(product_name) > 5 else search_query[:80])
     url = f"https://www.flipkart.com/search?q={q}"
     t0 = time.perf_counter()
 
     # ── Stage 1: Playwright stealth (primary — Flipkart heavily blocks plain HTTP) ──
+    from scraping_service.debug import log_debug
     try:
         html = await fetch_page_html_with_stealth(
             url,
@@ -158,7 +197,7 @@ async def scrape_flipkart(
             "en-IN",
             {"width": 414, "height": 896},
             wait_selectors=_CARD_SELECTORS[:4] + ["div._4rR01T", "a.s1Q9rs"],
-            timeout=40000,
+            timeout=60000,
             proxy_url=None,
         )
         if html:
@@ -167,9 +206,14 @@ async def scrape_flipkart(
                 soup, product_name, url,
                 (time.perf_counter() - t0) * 1000, "playwright"
             )
+            log_debug(f"[FLIPKART] Playwright matched offer: {offer}")
             if offer:
                 return offer
-    except Exception:
+            else:
+                with open("failed_flipkart.html", "w", encoding="utf-8") as f:
+                    f.write(html)
+    except Exception as e:
+        log_debug(f"[FLIPKART] Playwright stage threw exception: {e}")
         pass
 
     # ── Stage 2: httpx fallback (mobile then desktop UA) ────────────────────
