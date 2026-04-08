@@ -28,8 +28,8 @@ def _is_walmart_blocked(html: str, url: str, playwright: bool = False) -> bool:
     url_blocked = "/blocked" in str(url).lower()
     # Playwright renders a full browser session; real Walmart pages are 300KB+.
     # A Playwright result under 50 KB is almost certainly a bot-block challenge page.
-    # For plain httpx we keep the original 2 KB threshold.
-    min_size = 50_000 if playwright else 2_000
+    # For plain httpx we use the same threshold to filter challenge pages early.
+    min_size = 50_000
     return any(signal in text for signal in blocked_signals) or url_blocked or len(text) < min_size
 
 

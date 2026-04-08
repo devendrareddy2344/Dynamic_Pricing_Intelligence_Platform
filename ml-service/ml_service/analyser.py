@@ -5,10 +5,13 @@ from typing import Any, List
 
 import numpy as np
 import pandas as pd
+import warnings
+
 from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
 from sklearn.ensemble import IsolationForest
 from sklearn.neighbors import LocalOutlierFactor
 from sklearn.preprocessing import StandardScaler
+from sklearn.exceptions import ConvergenceWarning
 
 from ml_service.demand import demand_score
 
@@ -131,6 +134,12 @@ def _cluster_prices(prices: np.ndarray, model_type: str) -> tuple[np.ndarray, np
     n_distinct = len(np.unique(prices))
     k = min(3, len(prices), max(1, n_distinct))
 
+    # Handle single-cluster scenarios gracefully (fast path)
+    if k == 1 or np.std(prices) < 1e-4:
+        labels = np.zeros(len(prices), dtype=int)
+        centers = np.array([prices.mean()])
+        return labels, centers, {0: "mid"}
+
     if model_type == "dbscan":
         # DBSCAN for density-based clustering
         scaler = StandardScaler()
@@ -157,9 +166,11 @@ def _cluster_prices(prices: np.ndarray, model_type: str) -> tuple[np.ndarray, np
         centers = np.array([prices[labels == i].mean() for i in range(k)])
 
     else:  # default kmeans or auto
-        km = KMeans(n_clusters=k, n_init=10, random_state=42)
-        labels = km.fit_predict(X)
-        centers = km.cluster_centers_.flatten()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            km = KMeans(n_clusters=k, n_init=10, random_state=42)
+            labels = km.fit_predict(X)
+            centers = km.cluster_centers_.flatten()
 
     # Create tier mapping
     tiers = ["budget", "mid", "premium"]
