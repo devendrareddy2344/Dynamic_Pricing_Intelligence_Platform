@@ -1,7 +1,8 @@
 import asyncio
+import json
 import re
 import time
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, unquote
 
 import httpx
 from bs4 import BeautifulSoup
@@ -148,6 +149,138 @@ def _parse_walmart_cards(
     return None
 
 
+async def _scrape_via_ddg_fallback(
+    product_name: str,
+    session_id: str,
+    t0: float,
+) -> NormalisedOffer | None:
+    """Stage 3: Use DuckDuckGo HTML search to find a walmart.com/ip/ item ID,
+    then fetch the short-form product page directly (bypasses PerimeterX).
+
+    Key insight: the long-slug URL /ip/<title>/<id> is blocked, but the short
+    form /ip/item/<id> is served normally without PerimeterX interference.
+    """
+    q = quote_plus(f"site:walmart.com {product_name[:60]}")
+    ddg_url = f"https://html.duckduckgo.com/html/?q={q}"
+    ddg_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            r = await client.get(ddg_url, headers=ddg_headers)
+        if r.status_code not in (200, 202) or len(r.text) < 20000:
+            return None
+
+        soup = BeautifulSoup(r.text, "lxml")
+
+        # Find first walmart.com/ip/<title>/<item_id> URL in results
+        item_id: str | None = None
+        for a in soup.select(".result a[href]"):
+            href = a.get("href", "")
+            # DDG wraps links — extract real URL from uddg= query param
+            m_uddg = re.search(r"uddg=([^&]+)", href)
+            if m_uddg:
+                href = unquote(m_uddg.group(1))
+            # Extract numeric item ID from /ip/<slug>/<id>
+            m_id = re.search(r"walmart\.com/ip/[^/]+/(\d+)", href)
+            if m_id:
+                item_id = m_id.group(1)
+                break
+
+        if not item_id:
+            return None
+
+        # Use short /ip/item/<id> form — the long-slug form is gated but short is not
+        item_url = f"https://www.walmart.com/ip/item/{item_id}"
+        item_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html",
+        }
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            ir = await client.get(item_url, headers=item_headers)
+        if ir.status_code != 200 or len(ir.text) < 50_000:
+            return None
+
+        html = ir.text
+
+        # Strategy 1: JSON-LD structured data
+        soup2 = BeautifulSoup(html, "lxml")
+        for script in soup2.select('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(script.string or "")
+                entries = data if isinstance(data, list) else [data]
+                for entry in entries:
+                    price_raw = None
+                    offer_block = entry.get("offers") or entry.get("Offers")
+                    if isinstance(offer_block, dict):
+                        price_raw = offer_block.get("price") or offer_block.get("lowPrice")
+                    elif isinstance(offer_block, list) and offer_block:
+                        price_raw = offer_block[0].get("price")
+                    if price_raw is not None:
+                        title = entry.get("name", product_name)
+                        p_val = float(str(price_raw).replace(",", ""))
+                        if p_val > 0:
+                            score = title_match_score(product_name, title)
+                            if passes_validation(score):
+                                return NormalisedOffer(
+                                    source="walmart",
+                                    price=p_val,
+                                    currency="USD",
+                                    product_title=title,
+                                    product_url=item_url,
+                                    in_stock=True,
+                                    title_match_score=score,
+                                    raw_price_text=f"${p_val}",
+                                    metadata={
+                                        "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+                                        "method": "ddg_item_page",
+                                    },
+                                )
+            except Exception:
+                continue
+
+        # Strategy 2: Multiple regex patterns over embedded Next.js JSON blobs
+        title_m = re.search(r'"productName":"([^"]+)"', html)
+        title = title_m.group(1) if title_m else product_name
+        price_patterns = [
+            r'"priceInfo":\{"[^}]*"itemPrice":"(\$?[\d.]+)"',
+            r'"price":\s*([\d.]+)',
+            r'"currentPrice":([\d.]+)',
+            r'"salePrice":([\d.]+)',
+        ]
+        for pat in price_patterns:
+            m_p = re.search(pat, html)
+            if m_p:
+                try:
+                    p_val = float(m_p.group(1).replace("$", "").replace(",", ""))
+                    if 1 < p_val < 10000:
+                        score = title_match_score(product_name, title)
+                        if passes_validation(score):
+                            return NormalisedOffer(
+                                source="walmart",
+                                price=p_val,
+                                currency="USD",
+                                product_title=title,
+                                product_url=item_url,
+                                in_stock=True,
+                                title_match_score=score,
+                                raw_price_text=f"${p_val}",
+                                metadata={
+                                    "latency_ms": round((time.perf_counter() - t0) * 1000, 2),
+                                    "method": "ddg_item_page_regex",
+                                },
+                            )
+                except Exception:
+                    continue
+
+        return None
+    except Exception:
+        return None
+
+
 async def scrape_walmart(
     search_query: str,
     product_name: str,
@@ -156,6 +289,7 @@ async def scrape_walmart(
     """Walmart US search via Playwright-stealth (primary) + httpx (fallback).
 
     Walmart uses PerimeterX bot protection; Playwright stealth is essential.
+    Stage 3 falls back to DuckDuckGo → direct item page when search is blocked.
     """
     q = quote_plus(product_name[:80] if len(product_name) > 5 else search_query[:80])
     url = f"https://www.walmart.com/search?q={q}"
@@ -218,5 +352,10 @@ async def scrape_walmart(
                 f.write(html)
     except Exception:
         pass
+
+    # ── Stage 3: DuckDuckGo → direct item page (bypasses PerimeterX on search)
+    offer = await _scrape_via_ddg_fallback(product_name, session_id, t0)
+    if offer:
+        return offer
 
     return None
