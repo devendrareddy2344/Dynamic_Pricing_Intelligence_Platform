@@ -149,6 +149,72 @@ def _parse_walmart_cards(
     return None
 
 
+# In-memory cache: product_name -> walmart item_id
+# Avoids hitting DDG/Bing repeatedly for the same product across sessions
+_WALMART_ITEM_CACHE: dict[str, str] = {}
+
+
+async def _find_walmart_item_id(product_name: str) -> str | None:
+    """Search DDG then Bing HTML to find a walmart.com/ip item ID.
+    Returns the numeric item ID string, or None if not found.
+    """
+    cache_key = product_name.lower().strip()
+    if cache_key in _WALMART_ITEM_CACHE:
+        return _WALMART_ITEM_CACHE[cache_key]
+
+    _WALMART_ID_RE = re.compile(r"walmart\.com/ip/[^/]+/(\d+)")
+
+    async def _search(search_url: str, link_sel: str, param: str) -> str | None:
+        h = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as c:
+                r = await c.get(search_url, headers=h)
+            # Accept only responses large enough to be real results (not bot challenges)
+            if r.status_code not in (200, 202) or len(r.text) < 20_000:
+                return None
+            soup = BeautifulSoup(r.text, "lxml")
+            for a in soup.select(link_sel):
+                href = a.get("href", "")
+                if param:
+                    m_p = re.search(rf"{re.escape(param)}=([^&]+)", href)
+                    if m_p:
+                        href = unquote(m_p.group(1))
+                m_id = _WALMART_ID_RE.search(href)
+                if m_id:
+                    return m_id.group(1)
+        except Exception:
+            pass
+        return None
+
+    q_enc = quote_plus(f"site:walmart.com {product_name[:60]}")
+
+    # 1️⃣  DuckDuckGo HTML
+    item_id = await _search(
+        f"https://html.duckduckgo.com/html/?q={q_enc}",
+        ".result a[href]",
+        "uddg",
+    )
+
+    # 2️⃣  Bing HTML fallback (different rate-limit bucket)
+    if not item_id:
+        q_bing = quote_plus(f"site:walmart.com/ip {product_name[:60]}")
+        item_id = await _search(
+            f"https://www.bing.com/search?q={q_bing}&cc=US&setlang=en-US&form=QBLH",
+            "a[href]",
+            "",  # Bing uses unencoded real URLs in href
+        )
+
+    if item_id:
+        _WALMART_ITEM_CACHE[cache_key] = item_id
+
+    return item_id
+
+
 async def _scrape_via_ddg_fallback(
     product_name: str,
     session_id: str,
@@ -157,43 +223,13 @@ async def _scrape_via_ddg_fallback(
     """Stage 3: Use DuckDuckGo HTML search to find a walmart.com/ip/ item ID,
     then fetch the short-form product page directly (bypasses PerimeterX).
 
-    Key insight: the long-slug URL /ip/<title>/<id> is blocked, but the short
-    form /ip/item/<id> is served normally without PerimeterX interference.
     """
-    q = quote_plus(f"site:walmart.com {product_name[:60]}")
-    ddg_url = f"https://html.duckduckgo.com/html/?q={q}"
-    ddg_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-
     try:
-        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-            r = await client.get(ddg_url, headers=ddg_headers)
-        if r.status_code not in (200, 202) or len(r.text) < 20000:
-            return None
-
-        soup = BeautifulSoup(r.text, "lxml")
-
-        # Find first walmart.com/ip/<title>/<item_id> URL in results
-        item_id: str | None = None
-        for a in soup.select(".result a[href]"):
-            href = a.get("href", "")
-            # DDG wraps links — extract real URL from uddg= query param
-            m_uddg = re.search(r"uddg=([^&]+)", href)
-            if m_uddg:
-                href = unquote(m_uddg.group(1))
-            # Extract numeric item ID from /ip/<slug>/<id>
-            m_id = re.search(r"walmart\.com/ip/[^/]+/(\d+)", href)
-            if m_id:
-                item_id = m_id.group(1)
-                break
-
+        item_id = await _find_walmart_item_id(product_name)
         if not item_id:
             return None
 
-        # Use short /ip/item/<id> form — the long-slug form is gated but short is not
+        # Use short /ip/item/<id> form — not gated by PerimeterX
         item_url = f"https://www.walmart.com/ip/item/{item_id}"
         item_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
