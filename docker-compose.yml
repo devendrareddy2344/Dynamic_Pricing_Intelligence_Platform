@@ -2,19 +2,21 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: dpuser
-      POSTGRES_PASSWORD: dppass
-      POSTGRES_DB: dynamic_pricing
+      POSTGRES_USER: ${POSTGRES_USER:-dpuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dppass}
+      POSTGRES_DB: ${POSTGRES_DB:-dynamic_pricing}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/init-postgres.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dpuser -d dynamic_pricing"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-dpuser} -d $${POSTGRES_DB:-dynamic_pricing}"]
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - pricing-network
 
   redis:
     image: redis:7-alpine
@@ -25,6 +27,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - pricing-network
 
   backend:
     build:
@@ -34,7 +38,7 @@ services:
       - .env
     environment:
       REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql://dpuser:dppass@postgres:5432/dynamic_pricing
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dpuser}:${POSTGRES_PASSWORD:-dppass}@postgres:5432/${POSTGRES_DB:-dynamic_pricing}
     ports:
       - "8000:8000"
     depends_on:
@@ -42,6 +46,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - pricing-network
 
   frontend:
     build:
@@ -51,6 +57,8 @@ services:
       - "5173:80"
     depends_on:
       - backend
+    networks:
+      - pricing-network
 
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -60,6 +68,8 @@ services:
       - "9090:9090"
     depends_on:
       - backend
+    networks:
+      - pricing-network
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -73,6 +83,12 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+    networks:
+      - pricing-network
+
+networks:
+  pricing-network:
+    driver: bridge
 
 volumes:
   pgdata:

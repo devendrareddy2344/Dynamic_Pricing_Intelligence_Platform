@@ -65,7 +65,7 @@ def _parse_bestbuy_cards(
             ".price-current, .product-price, "
             "[data-automation*='price'], .sr-price, "
             ".priceView-price span, .price-block, "
-            # 2024 layout
+            # 2024+ layout
             "span[class*='price'], div[class*='price']"
         )
 
@@ -78,15 +78,16 @@ def _parse_bestbuy_cards(
         if len(title) < 5:
             continue
 
+        # Build raw price string — NOTE: do NOT re-assign raw after the regex fallback
         raw = price_el.get_text(strip=True) if price_el else ""
         if not raw:
-            import re
             txt = card.get_text(" ", strip=True)
             m = re.search(r"\$\s?([\d,]+\.?\d*)", txt)
             if m:
                 raw = m.group(0)
             else:
                 continue
+
         href = title_el.get("href") or ""
         if not href:
             first_a = card.select_one("a[href]")
@@ -94,6 +95,7 @@ def _parse_bestbuy_cards(
         if href.startswith("/"):
             href = "https://www.bestbuy.com" + href
 
+        # raw is already set above — do not overwrite it
         p_val, _ = strip_currency(raw, "USD")
         if p_val is None:
             m = re.search(r"\$?\s*([\d,]+\.?\d*)", raw)

@@ -126,7 +126,10 @@ def _detect_anomalies(prices: np.ndarray, model_type: str) -> np.ndarray:
 def _cluster_prices(prices: np.ndarray, model_type: str) -> tuple[np.ndarray, np.ndarray | None, dict[int, str]]:
     """Cluster prices using different algorithms."""
     X = prices.reshape(-1, 1)
-    k = min(3, len(prices))
+    # Never request more clusters than distinct price values — prevents k-means
+    # ConvergenceWarning: "Number of distinct clusters found smaller than n_clusters"
+    n_distinct = len(np.unique(prices))
+    k = min(3, len(prices), max(1, n_distinct))
 
     if model_type == "dbscan":
         # DBSCAN for density-based clustering

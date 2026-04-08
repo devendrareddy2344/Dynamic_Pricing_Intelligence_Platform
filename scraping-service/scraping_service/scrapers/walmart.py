@@ -13,7 +13,7 @@ from scraping_service.scrapers.playwright_utils import fetch_page_html_with_stea
 from scraping_service.user_agents import random_ua, random_mobile_ua
 
 
-def _is_walmart_blocked(html: str, url: str) -> bool:
+def _is_walmart_blocked(html: str, url: str, playwright: bool = False) -> bool:
     text = (html or "").lower()
     blocked_signals = [
         "robot or human",
@@ -25,7 +25,12 @@ def _is_walmart_blocked(html: str, url: str) -> bool:
         "access denied",
         "bot traffic",
     ]
-    return any(signal in text for signal in blocked_signals) or len(text) < 2000
+    url_blocked = "/blocked" in str(url).lower()
+    # Playwright renders a full browser session; real Walmart pages are 300KB+.
+    # A Playwright result under 50 KB is almost certainly a bot-block challenge page.
+    # For plain httpx we keep the original 2 KB threshold.
+    min_size = 50_000 if playwright else 2_000
+    return any(signal in text for signal in blocked_signals) or url_blocked or len(text) < min_size
 
 
 def _parse_walmart_price(card) -> str:
@@ -197,7 +202,7 @@ async def scrape_walmart(
             timeout=45000,
             proxy_url=None,
         )
-        if html and not _is_walmart_blocked(html, url):
+        if html and not _is_walmart_blocked(html, url, playwright=True):
             soup = BeautifulSoup(html, "lxml")
             offer = _parse_walmart_cards(
                 soup, product_name, url,
