@@ -2,6 +2,12 @@ import sys
 import asyncio
 import os
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("python-dotenv not installed; relying on system environment variables.")
+
 # Silence Playwright asyncio teardown exceptions on Windows
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

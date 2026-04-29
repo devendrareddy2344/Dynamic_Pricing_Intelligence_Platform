@@ -7,6 +7,16 @@ from typing import Any, List
 import httpx
 from dotenv import load_dotenv
 
+import os
+import sys
+
+# Add sibling service paths for discovery
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+for service in ["ml-service", "scraping-service", "vision-service"]:
+    _path = os.path.join(_root, service)
+    if _path not in sys.path:
+        sys.path.append(_path)
+
 from ml_service.analyser import analyse_prices
 
 load_dotenv(override=True)

@@ -14,6 +14,14 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+
+# Add sibling service paths for discovery
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+for service in ["ml-service", "scraping-service", "vision-service", "genai-service"]:
+    _p = os.path.join(_root, service)
+    if _p not in sys.path:
+        sys.path.append(_p)
+
 from datetime import UTC, datetime
 from typing import Any, Dict
 
@@ -21,7 +29,8 @@ import redis.asyncio as redis
 from PIL import Image
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse, Response, FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 # Optional prometheus import
 try:
@@ -84,6 +93,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount frontend static files
+# We mount this AFTER all specific API routes are defined or at the end
+# but mount(..., html=True) is usually done at the end.
+frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+if os.path.exists(frontend_path):
+    logger.info("Serving frontend from %s", frontend_path)
+    # We use a special mount that handles SPA routing (redirecting 404s to index.html)
+    @app.exception_handler(404)
+    async def spa_fallback(request, exc):
+        if not request.url.path.startswith("/api/"):
+            return FileResponse(os.path.join(frontend_path, "index.html"))
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+else:
+    logger.warning("Frontend path %s not found. API mode only.", frontend_path)
 
 
 class VisionResponse(BaseModel):
