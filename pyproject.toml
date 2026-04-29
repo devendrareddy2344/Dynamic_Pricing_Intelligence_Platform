@@ -38,16 +38,12 @@ dependencies = [
     "rapidfuzz~=3.14.0"
 ]
 
-[project.packages]
-api_gateway = { include = "api_gateway" }
-genai_service = { include = "genai_service" }
-ml_service = { include = "ml_service" }
-scraping_service = { include = "scraping_service" }
-vision_service = { include = "vision_service" }
+[tool.setuptools]
+package-dir = { "" = ".", "ml_service" = "ml-service/ml_service", "genai_service" = "genai-service/genai_service", "scraping_service" = "scraping-service/scraping_service", "vision_service" = "vision-service/vision_service" }
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["api_gateway", "genai_service", "ml_service", "scraping_service", "vision_service"]
+include = ["api_gateway", "ml_service", "genai_service", "scraping_service", "vision_service"]
 
 [tool.pyright]
 include = ["api_gateway", "genai-service", "ml-service", "scraping-service", "vision-service"]

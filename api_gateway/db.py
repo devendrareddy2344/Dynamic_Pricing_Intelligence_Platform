@@ -59,16 +59,31 @@ def _parse_dsn() -> str:
 async def get_pool() -> asyncpg.Pool:
     global _pool
     async with _pool_lock:
-        if _pool is None:
-            dsn = _parse_dsn()
-            logger.info("Connecting to PostgreSQL at %s", dsn.split('@')[1] if '@' in dsn else dsn)
-            _pool = await asyncpg.create_pool(
-                dsn=dsn,
-                min_size=1,
-                max_size=10,
-                command_timeout=60,
-            )
-    return _pool
+        if _pool is not None:
+            return _pool
+
+        dsn = _parse_dsn()
+        logger.info("Connecting to PostgreSQL at %s", dsn.split('@')[1] if '@' in dsn else dsn)
+
+        last_err = None
+        for attempt in range(1, 6):
+            try:
+                _pool = await asyncpg.create_pool(
+                    dsn=dsn,
+                    min_size=1,
+                    max_size=10,
+                    command_timeout=60,
+                )
+                logger.info("Successfully connected to PostgreSQL on attempt %d", attempt)
+                return _pool
+            except Exception as e:
+                last_err = e
+                logger.warning("Database connection attempt %d failed: %s. Retrying...", attempt, e)
+                if attempt < 5:
+                    await asyncio.sleep(2)
+
+        logger.error("Failed to connect to PostgreSQL after 5 attempts.")
+        raise last_err
 
 
 async def insert_price_rows(rows: list[dict[str, Any]]) -> None:

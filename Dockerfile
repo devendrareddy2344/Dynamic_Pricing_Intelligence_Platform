@@ -1,3 +1,15 @@
+# Stage 1: Build the frontend
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/frontend
+# Copy package files first to leverage Docker cache
+COPY frontend/package*.json ./
+RUN npm install
+# Copy the rest of the frontend code
+COPY frontend/ ./
+# Build the production assets
+RUN npm run build
+
+# Stage 2: Build the backend and combine
 FROM python:3.12-slim-bookworm
 
 WORKDIR /app
@@ -12,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright and its dependencies
+# Install Playwright and its dependencies for scraping
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/.ms-playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
@@ -23,18 +35,20 @@ RUN pip install --no-cache-dir playwright
 RUN mkdir -p $PLAYWRIGHT_BROWSERS_PATH \
     && playwright install chromium
 
-# Create a non-root user
+# Copy application code
+COPY vision-service /app/vision-service
+COPY scraping-service /app/scraping-service
+COPY ml-service /app/ml-service
+COPY genai-service /app/genai_service
+COPY api_gateway /app/api_gateway
+
+# Copy the built frontend from Stage 1
+COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
+
+# Create a non-root user for security
 RUN useradd -m appuser \
     && chown -R appuser:appuser /app \
     && chown -R appuser:appuser $PLAYWRIGHT_BROWSERS_PATH
-
-COPY vision-service/vision_service /app/vision_service
-COPY scraping-service/scraping_service /app/scraping_service
-COPY ml-service/ml_service /app/ml_service
-COPY genai-service/genai_service /app/genai_service
-COPY api_gateway /app/api_gateway
-
-RUN chown -R appuser:appuser /app
 
 USER appuser
 

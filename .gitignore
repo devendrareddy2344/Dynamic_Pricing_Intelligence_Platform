@@ -39,7 +39,7 @@ orch_log.txt
 # Screenshots and Debug Images
 *.png
 *.jpg
-*.jpeg
+
 
 # Local Databases
 *.db

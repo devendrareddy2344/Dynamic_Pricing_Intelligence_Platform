@@ -42,6 +42,10 @@ Synycs_Dynamic_Pricing/
 
 ---
 
+![System Workflow](./workflow.jpeg)
+
+---
+
 ## 🚀 Execution Pseudo-Code Flow
 
 The entire multi-layer application operates autonomously when a User uploads an image via the Frontend. Here is the exact logical pipeline governing data movement:

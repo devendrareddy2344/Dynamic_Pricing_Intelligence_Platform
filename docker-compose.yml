@@ -2,19 +2,21 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: dpuser
-      POSTGRES_PASSWORD: dppass
-      POSTGRES_DB: dynamic_pricing
+      POSTGRES_USER: ${PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-dppass}
+      POSTGRES_DB: ${PG_DATABASE:-dynamic_pricing}
     ports:
-      - "5432:5432"
+      - "${PG_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/init-postgres.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dpuser -d dynamic_pricing"]
+      test: ["CMD-SHELL", "pg_isready -U $${PG_USER:-postgres} -d $${PG_DATABASE:-dynamic_pricing}"]
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - pricing-network
 
   redis:
     image: redis:7-alpine
@@ -25,32 +27,31 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+      - pricing-network
 
   backend:
     build:
       context: .
-      dockerfile: Dockerfile.backend
+      dockerfile: Dockerfile
     env_file:
       - .env
     environment:
       REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql://dpuser:dppass@postgres:5432/dynamic_pricing
+      PG_HOST: postgres
+      PG_PORT: 5432
+      DATABASE_URL: postgresql://${PG_USER:-postgres}:${PG_PASSWORD:-dppass}@postgres:5432/${PG_DATABASE:-dynamic_pricing}
     ports:
       - "8000:8000"
+      # If you want to access the UI on 5173 to keep it familiar
+      - "5173:8000"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "5173:80"
-    depends_on:
-      - backend
+    networks:
+      - pricing-network
 
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -60,6 +61,8 @@ services:
       - "9090:9090"
     depends_on:
       - backend
+    networks:
+      - pricing-network
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -73,6 +76,12 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
+    networks:
+      - pricing-network
+
+networks:
+  pricing-network:
+    driver: bridge
 
 volumes:
   pgdata:

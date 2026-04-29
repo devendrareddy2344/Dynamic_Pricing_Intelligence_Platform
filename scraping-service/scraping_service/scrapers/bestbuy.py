@@ -16,7 +16,6 @@ from scraping_service.user_agents import random_ua, random_mobile_ua
 def _is_bestbuy_blocked(html: str, url: str) -> bool:
     text = (html or "").lower()
     blocked_signals = [
-        "captcha",
         "robot check",
         "temporarily unavailable",
         "access denied",
@@ -35,13 +34,14 @@ def _parse_bestbuy_cards(
 ) -> NormalisedOffer | None:
     """Shared card parser for both Playwright and httpx HTML paths."""
     cards = (
-        soup.select("li.sku-item")
+        soup.select("div.sku-block")
+        or soup.select("li.sku-item")
         or soup.select(".sku-item")
         or soup.select("[data-sku-id]")
         or soup.select("[data-automation='product-item']")
         or soup.select(".product-item")
         or soup.select(".sku-container")
-        or soup.select("[data-testid*='product']")
+        or soup.select("[data-testid*='product-card']")
         # 2024+ layout
         or soup.select("div[class*='shop-sku-list-item']")
         or soup.select("article[class*='product']")
@@ -54,7 +54,7 @@ def _parse_bestbuy_cards(
             ".product-name a, [data-automation*='title'] a, "
             ".sku-header a, a.product-link, h4 a, "
             # 2024 layout
-            "h2 a, a[class*='product-title']"
+            "h2 a, a[class*='product-title'], a[href*='/product/']"
         )
         price_el = card.select_one(
             ".priceView-hero-price span[aria-hidden='true'], "
@@ -65,34 +65,40 @@ def _parse_bestbuy_cards(
             ".price-current, .product-price, "
             "[data-automation*='price'], .sr-price, "
             ".priceView-price span, .price-block, "
-            # 2024 layout
-            "span[class*='price'], div[class*='price']"
+            # 2024+ layout
+            "span[class*='price'], div[class*='price'], "
+            "[data-testid='price-block-regular-price'], "
+            "[data-testid='price-block-customer-price']"
         )
 
         if not title_el:
             title_el = card.select_one("a[href]")
-        if not title_el:
-            continue
+            
+        href = title_el.get("href") if title_el else ""
+        if href and href.startswith("/"):
+            href = "https://www.bestbuy.com" + href
 
-        title = title_el.get_text(" ", strip=True)
+        title = title_el.get_text(" ", strip=True) if title_el else ""
+        if not title or len(title) < 5:
+            # Fallback to image alt text if the link had no text
+            img_el = card.select_one("img[alt]")
+            if img_el and img_el.get("alt"):
+                title = img_el.get("alt").replace("Front. ", "").replace("Front ", "").strip()
+                if title.endswith("."):
+                    title = title[:-1]
+
         if len(title) < 5:
             continue
 
+        # Build raw price string — NOTE: do NOT re-assign raw after the regex fallback
         raw = price_el.get_text(strip=True) if price_el else ""
         if not raw:
-            import re
             txt = card.get_text(" ", strip=True)
             m = re.search(r"\$\s?([\d,]+\.?\d*)", txt)
             if m:
                 raw = m.group(0)
             else:
                 continue
-        href = title_el.get("href") or ""
-        if not href:
-            first_a = card.select_one("a[href]")
-            href = first_a.get("href", "") if first_a else ""
-        if href.startswith("/"):
-            href = "https://www.bestbuy.com" + href
 
         p_val, _ = strip_currency(raw, "USD")
         if p_val is None:
@@ -171,6 +177,7 @@ async def scrape_bestbuy(
             "en-US",
             {"width": 1280, "height": 800},
             wait_selectors=[
+                "div.sku-block",
                 "li.sku-item",
                 ".sku-item",
                 "[data-sku-id]",
